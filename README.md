@@ -1,5 +1,8 @@
 # Retrieve Roblox Catalog 3D Asset
 
+I spent an evening working on this for a Chrome Extension, if i made any mistakes you can make a pull request! 😎
+This was all written by hand so expect spelling mistakes.
+
 ## Request Flow
 
 1. Get the initial asset information from the 3D thumbnail endpoint
