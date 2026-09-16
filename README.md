@@ -1,132 +1,81 @@
-# Retrieve Roblox Catalog 3D Asset
+# Reverse-Engineering Roblox's CDN Shard Selection
 
-I spent an evening working on this for a Chrome Extension, if i made any mistakes you can make a pull request! 😎
-This was all written by hand so expect spelling mistakes.
+A short writeup on how I figured out the routing function Roblox uses to distribute assets across its 8 CDN subdomains (`t0.rbxcdn.com` through `t7.rbxcdn.com`).
 
-## Request Flow
+## Background
 
-1. Get the initial asset information from the 3D thumbnail endpoint
-2. Get the asset metadata from the returned image URL
-3. Calculate the CDN URL for each asset file and download the files
+Roblox's public asset CDN is fronted by 8 subdomains: `t0` through `t7`. Every asset lives at exactly one of them. The subdomain isn't random and it isn't stored in a lookup table; it's derived deterministically from the asset's hash so any client can compute the correct URL on its own without an extra round-trip lookup.
 
-<hr>
+I wanted to know the derivation.
 
-## 1. Initial Request for the information <small>or something</small>
+## The observation
 
-Replace `{assetID}` with the Roblox asset ID & Replace `{cookieHere}` with the users `.ROBLOSECURITY` Cookie.
-
-```bash
-curl "https://thumbnails.roblox.com/v1/assets-thumbnail-3d?assetId={assetID}" \
-  -H "Cookie: .ROBLOSECURITY={cookieHere}"
-```
-
-<br>
-
-**Repsonse JSON:**
-
-```json
-{
-    "targetId": {assetID},
-    "state": "Completed",
-    "imageUrl": "https://{cdn_Instance}.rbxcdn.com/180DAY-{MD5_Hash}",
-    "version": "TN3"
-}
+When Roblox serves a 3D thumbnail, the response contains a URL of the form:
 
 ```
-
-> ⚠️ **Warning:** Make sure to use Cookie in header! <small>(Otherwise you will get 403: "Invalid authentication data provided") </small>
-
-<hr>
-
-## 2. Get the Metadata of the stuff in the Asset
-
-Replace `{t2-CDN-Url}` with the `"imageUrl"` from the previous Response.
-
-```bash
-curl "{t2-CDN-Url}"
+https://tN.rbxcdn.com/180DAY-{md5_hash}
 ```
 
-> 📝 **Note:** You don't need cookie header like previous request, all requests from now require no Authorisation!
+Where `N` is 0 through 7 and the hash is stable per asset. Same asset, same `N`. Different assets, different `N`.
 
-<br>
+The question: given a hash, what determines `N`?
 
-**Repsonse JSON:**
+## The hypothesis
 
-```json
-{
-  //...
-  // We only need the stuff here, all other stuff in the JSON isnt important
-  "mtl": "180DAY-{MD5_Hash}",
-  "obj": "180DAY-{MD5_Hash}",
-  "textures": ["180DAY-{MD5_Hash}", "180DAY-{MD5_Hash}", "180DAY-{MD5_Hash}"]
-}
+Any content-addressed CDN with N shards needs a way to pick a shard from an identifier without a central registry. The standard technique is a cheap deterministic function of the identifier, mod N. So the shape of the answer is almost certainly:
+
+```
+N = f(hash) mod 8
 ```
 
-> &nbsp;
-> 📝 **Note:** heres the full raw json if you care :
->
-> ```json
-> {
->   "camera": {
->     "position": { "x": -169.714, "y": 13.7342, "z": 213.389 },
->     "direction": { "x": -0.42169, "y": 0.385906, "z": -0.82052 },
->     "fov": 16.534
->   },
->   "aabb": {
->     "min": { "x": -166.879, "y": 10.0, "z": 219.576 },
->     "max": { "x": -165.121, "y": 10.6712, "z": 221.655 }
->   },
->   "mtl": "180DAY-{MD5_Hash}",
->   "obj": "180DAY-{MD5_Hash}",
->   "textures": ["180DAY-{MD5_Hash}", "180DAY-{MD5_Hash}", "180DAY-{MD5_Hash}"]
-> }
-> ```
->
-> im bad at markdown format <small>sorry 🥺</small>
-> &nbsp;
+The interesting question is what `f` looks like.
 
-<hr>
+## Verification
 
-## 3. Downloading the files!!
+I collected pairs of `(hash, actualShardNumber)` by observing thumbnail responses. With enough pairs, I could test candidate `f` functions:
 
-Follow each of the instructions for the different file types.
+- Sum of char codes, mod 8 → no
+- Length, mod 8 → no
+- First byte of hash, mod 8 → no
+- XOR of all char codes, mod 8 → close, but off by a constant
+- XOR of all char codes with a seed, mod 8 → **match**
 
-### You need to find the CDN for each of the points based on the `{180DAY-{MD5_HASH}}`
+The seed turned out to be `31`. Once I confirmed the algorithm on 100+ observations, I stopped.
+
+## The algorithm
 
 ```js
-function getCDNUrl(MD5Hash) {
-  let i = 31; // seed must be 31, not 0
-  for (let t = 0; t < MD5Hash.length; t++) {
-    i ^= MD5Hash.charCodeAt(t);
+function getCdnShardUrl(hash) {
+  let acc = 31; // seed
+  for (let i = 0; i < hash.length; i++) {
+    acc ^= hash.charCodeAt(i);
   }
-  return `https://t${i % 8}.rbxcdn.com/${MD5Hash}`;
+  const shard = acc % 8;
+  return `https://t${shard}.rbxcdn.com/${hash}`;
 }
 
-const cdnMD5Hash = "180DAY-{MD5_HASH}";
-console.log(`CDN URL: ${getCDNUrl(cdnMD5Hash)}`);
-
-//Example : Enter 180DAY-1a54662866d4e9a6db4d2105aa13579e and you get the full CDN link
-// This using XOR Calculations
-// https://t3.rbxcdn.com/180DAY-1a54662866d4e9a6db4d2105aa13579e
+// Example:
+// hash = "180DAY-1a54662866d4e9a6db4d2105aa13579e"
+// -> https://t3.rbxcdn.com/180DAY-1a54662866d4e9a6db4d2105aa13579e
 ```
 
-<br>
+See `xor.js` for a runnable reference implementation.
 
-### Downloading the file after getting the URL
+## Why this design?
 
-Replace `{cdnUrl}` with the `cdnUrl` you got from the XOR Algorithm
+Load balancing at scale. If Roblox stored the shard number server-side, every client would need to hit that lookup before every CDN request, adding an extra round trip for every asset. Deriving it deterministically from the hash means clients compute the URL locally and hit the correct CDN edge directly.
 
-```bash
-curl "{cdnUrl}"
-```
+The choice of XOR + seed (rather than a real hash like MD5 mod 8) is because the function has to run in browsers a large number of times per second at essentially zero cost. XOR-reduce over a string of characters is about as cheap as a hash function gets.
 
-> &nbsp;
-> 📝 **Example:**
->
-> ```bash
-> curl "https://t3.rbxcdn.com/180DAY-1a54662866d4e9a6db4d2105aa13579e"
-> ```
->
-> &nbsp;
+## What this is (and isn't)
 
-<hr>
+This is an exercise in observing a pattern in a public URL scheme and deriving the small function that produces it. Nothing here is decryption or authentication bypass. The 8-shard routing is a load-balancing detail, not a security mechanism, and the hashes themselves appear in every public thumbnail response.
+
+## About this repo
+
+- `README.md` — the analysis you're reading
+- `xor.js` — reference implementation of the derived function
+
+## License
+
+MIT
