@@ -31,7 +31,7 @@ curl "https://thumbnails.roblox.com/v1/assets-thumbnail-3d?assetId={assetID}" \
 
 ```
 
-> ⚠️ **Warning:** haha <small>_haha_ (i just figured out how to use these) </small>
+> ⚠️ **Warning:** Make sure to use Cookie in header! <small>(Otherwise you will get 403: "Invalid authentication data provided") </small>
 
 <hr>
 
