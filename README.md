@@ -51,17 +51,12 @@ curl "{t2-CDN-Url}"
 
 ```json
 {
-  ...
+  //...
   // We only need the stuff here, all other stuff in the JSON isnt important
   "mtl": "180DAY-{MD5_Hash}",
   "obj": "180DAY-{MD5_Hash}",
-  "textures": [
-    "180DAY-{MD5_Hash}",
-    "180DAY-{MD5_Hash}",
-    "180DAY-{MD5_Hash}"
-  ]
+  "textures": ["180DAY-{MD5_Hash}", "180DAY-{MD5_Hash}", "180DAY-{MD5_Hash}"]
 }
-
 ```
 
 > &nbsp;
