@@ -78,4 +78,4 @@ This is an exercise in observing a pattern in a public URL scheme and deriving t
 
 ## License
 
-MIT
+[MIT](https://github.com/IncrediDev/roblox-cdn-shard-routing/blob/main/LICENSE)
